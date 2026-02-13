@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Голосовой переводчик</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        button {
+            flex: 1;
+            padding: 15px;
+            font-size: 18px;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        #startBtn {
+            background: #4CAF50;
+            color: white;
+        }
+
+        #startBtn:hover {
+            background: #45a049;
+        }
+
+        #startBtn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        #stopBtn {
+            background: #f44336;
+            color: white;
+        }
+
+        #stopBtn:hover {
+            background: #da190b;
+        }
+
+        #stopBtn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .status {
+            text-align: center;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-size: 16px;
+            color: #666;
+        }
+
+        .status.listening {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .status.translating {
+            background: #fff3e0;
+            color: #e65100;
+        }
+
+        .audio-visualizer {
+            margin-bottom: 20px;
+        }
+
+        .visualizer-label {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .visualizer-bar {
+            height: 30px;
+            background: #f0f0f0;
+            border-radius: 15px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .visualizer-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #FFC107, #f44336);
+            width: 0%;
+            transition: width 0.1s;
+            border-radius: 15px;
+        }
+
+        .visualizer-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .history {
+            margin-top: 30px;
+        }
+
+        .history h2 {
+            font-size: 20px;
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .translation-item {
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .original {
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .translated {
+            color: #333;
+            font-weight: 500;
+        }
+
+        .lang-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 5px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-right: 8px;
+        }
+
+        .lang-ru {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .lang-en {
+            background: #fce4ec;
+            color: #c2185b;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ Голосовой переводчик</h1>
+        
+        <div class="controls">
+            <button id="startBtn">▶️ Старт</button>
+            <button id="stopBtn" disabled>⏹️ Стоп</button>
+        </div>
+
+        <div id="status" class="status">Нажмите "Старт" для начала</div>
+
+        <div class="audio-visualizer">
+            <div class="visualizer-label">Уровень звука:</div>
+            <div class="visualizer-bar">
+                <div id="visualizerFill" class="visualizer-fill"></div>
+                <div id="visualizerText" class="visualizer-text">0%</div>
+            </div>
+        </div>
+
+        <div class="history">
+            <h2>История переводов:</h2>
+            <div id="historyList"></div>
+        </div>
+    </div>
+
+    <script>
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status');
+        const historyList = document.getElementById('historyList');
+        const visualizerFill = document.getElementById('visualizerFill');
+        const visualizerText = document.getElementById('visualizerText');
+
+        let recognition;
+        let isListening = false;
+        let collectedText = '';
+        let pauseTimer = null;
+        let isTranslating = false;
+        let audioContext;
+        let analyser;
+        let microphone;
+        let javascriptNode;
+        let mediaStream; // Храним поток микрофона постоянно
+
+        // Инициализация распознавания речи
+        if ('webkitSpeechRecognition' in window) {
+            recognition = new webkitSpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'ru-RU';
+            
+            console.log('Speech recognition initialized:', recognition);
+        } else {
+            alert('Ваш браузер не поддерживает распознавание речи. Используйте Google Chrome.');
+        }
+
+        // Аудиовизуализация
+        async function startAudioVisualization() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                microphone = audioContext.createMediaStreamSource(mediaStream);
+                javascriptNode = audioContext.createScriptProcessor(2048, 1, 1);
+
+                analyser.smoothingTimeConstant = 0.8;
+                analyser.fftSize = 1024;
+
+                microphone.connect(analyser);
+                analyser.connect(javascriptNode);
+                javascriptNode.connect(audioContext.destination);
+
+                javascriptNode.onaudioprocess = function() {
+                    const array = new Uint8Array(analyser.frequencyBinCount);
+                    analyser.getByteFrequencyData(array);
+                    const values = array.reduce((a, b) => a + b, 0);
+                    const average = values / array.length;
+                    const percent = Math.round((average / 255) * 100);
+                    
+                    visualizerFill.style.width = percent + '%';
+                    visualizerText.textContent = percent + '%';
+                };
+
+                return true;
+            } catch (err) {
+                console.error('Ошибка доступа к микрофону:', err);
+                status.textContent = '❌ Нет доступа к микрофону. Разрешите доступ в настройках браузера.';
+                status.className = 'status';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                isListening = false;
+                return false;
+            }
+        }
+
+        function stopAudioVisualization() {
+            if (javascriptNode) {
+                javascriptNode.disconnect();
+            }
+            if (analyser) {
+                analyser.disconnect();
+            }
+            if (microphone) {
+                microphone.disconnect();
+            }
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+            if (audioContext) {
+                audioContext.close();
+            }
+            visualizerFill.style.width = '0%';
+            visualizerText.textContent = '0%';
+        }
+
+        // Определение языка
+        function detectLanguage(text) {
+            const cyrillicPattern = /[а-яА-ЯёЁ]/;
+            return cyrillicPattern.test(text) ? 'ru' : 'en';
+        }
+
+        // Перевод текста через LibreTranslate (бесплатный, open-source)
+        async function translateText(text, sourceLang) {
+            const targetLang = sourceLang === 'ru' ? 'en' : 'ru';
+            
+            try {
+                // LibreTranslate публичный API
+                const url = 'https://libretranslate.com/translate';
+                
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        q: text,
+                        source: sourceLang,
+                        target: targetLang,
+                        format: 'text'
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.translatedText) {
+                    return data.translatedText;
+                } else {
+                    // Если не сработало, используем MyMemory как запасной
+                    console.log('LibreTranslate не сработал, используем MyMemory');
+                    const backupUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`;
+                    const backupResponse = await fetch(backupUrl);
+                    const backupData = await backupResponse.json();
+                    
+                    if (backupData.responseData && backupData.responseData.translatedText) {
+                        return backupData.responseData.translatedText;
+                    }
+                    
+                    return 'Ошибка перевода';
+                }
+            } catch (error) {
+                console.error('Ошибка перевода:', error);
+                
+                // Запасной вариант - MyMemory
+                try {
+                    const backupUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`;
+                    const backupResponse = await fetch(backupUrl);
+                    const backupData = await backupResponse.json();
+                    
+                    if (backupData.responseData && backupData.responseData.translatedText) {
+                        return backupData.responseData.translatedText;
+                    }
+                } catch (e) {
+                    console.error('Запасной перевод тоже не сработал:', e);
+                }
+                
+                return 'Ошибка перевода';
+            }
+        }
+
+        // Добавление в историю
+        function addToHistory(original, translated, sourceLang) {
+            const item = document.createElement('div');
+            item.className = 'translation-item';
+            item.innerHTML = `
+                <div class="original">
+                    <span class="lang-badge lang-${sourceLang}">${sourceLang.toUpperCase()}</span>
+                    ${original}
+                </div>
+                <div class="translated">
+                    <span class="lang-badge lang-${sourceLang === 'ru' ? 'en' : 'ru'}">${sourceLang === 'ru' ? 'EN' : 'RU'}</span>
+                    ${translated}
+                </div>
+            `;
+            historyList.insertBefore(item, historyList.firstChild);
+        }
+
+        // Обработка результатов распознавания
+        recognition.onresult = function(event) {
+            console.log('📢 onresult called! Events:', event.results.length);
+            
+            // Если идёт перевод или озвучка - игнорируем новые результаты
+            if (isTranslating || speechSynthesis.speaking) {
+                console.log('Игнорируем - идёт перевод/озвучка');
+                return;
+            }
+            
+            clearTimeout(pauseTimer);
+            
+            let interimTranscript = '';
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const transcript = event.results[i][0].transcript;
+                console.log(`Result ${i}: "${transcript}" (final: ${event.results[i].isFinal})`);
+                if (event.results[i].isFinal) {
+                    collectedText += transcript + ' ';
+                } else {
+                    interimTranscript = transcript;
+                }
+            }
+
+            const displayText = collectedText + interimTranscript;
+            console.log('Display text:', displayText);
+            status.textContent = `🎤 Слушаю: ${displayText}`;
+
+            // Запускаем таймер на 3 секунды после последнего слова
+            pauseTimer = setTimeout(async () => {
+                if (collectedText.trim() && !isTranslating) {
+                    isTranslating = true;
+                    console.log('Начинаем перевод:', collectedText.trim());
+                    
+                    status.textContent = '⏳ Перевожу...';
+                    status.className = 'status translating';
+
+                    const textToTranslate = collectedText.trim();
+                    const sourceLang = detectLanguage(textToTranslate);
+                    const translated = await translateText(textToTranslate, sourceLang);
+                    
+                    console.log('Перевод получен:', translated);
+                    
+                    addToHistory(textToTranslate, translated, sourceLang);
+                    
+                    // Очищаем накопленный текст
+                    collectedText = '';
+                    isTranslating = false;
+                    
+                    // Сразу возвращаемся к прослушиванию
+                    if (isListening) {
+                        status.textContent = '🎤 Слушаю...';
+                        status.className = 'status listening';
+                        console.log('Готов к новому распознаванию');
+                    }
+                }
+            }, 3000);
+        };
+
+        recognition.onerror = function(event) {
+            console.error('Ошибка распознавания:', event.error);
+            
+            // Показываем только критические ошибки
+            if (event.error === 'not-allowed') {
+                status.textContent = '❌ Доступ к микрофону заблокирован';
+                status.className = 'status';
+                isListening = false;
+            }
+            // Все остальные ошибки просто логируем, но не реагируем
+        };
+
+        // Кнопки управления
+        startBtn.onclick = async function() {
+            startBtn.disabled = true;
+            status.textContent = '⏳ Запрашиваю доступ к микрофону...';
+            
+            const audioOk = await startAudioVisualization();
+            
+            if (audioOk) {
+                isListening = true;
+                stopBtn.disabled = false;
+                
+                // Запускаем распознавание речи
+                try {
+                    recognition.start();
+                    status.textContent = '🎤 Слушаю...';
+                    status.className = 'status listening';
+                } catch (err) {
+                    console.error('Ошибка запуска распознавания:', err);
+                    status.textContent = '❌ Ошибка запуска распознавания';
+                    startBtn.disabled = false;
+                    stopBtn.disabled = true;
+                    isListening = false;
+                }
+            }
+        };
+
+        stopBtn.onclick = function() {
+            isListening = false;
+            isTranslating = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            recognition.stop();
+            clearTimeout(pauseTimer);
+            stopAudioVisualization();
+            status.textContent = 'Остановлено';
+            status.className = 'status';
+            collectedText = '';
+        };
+    </script>
+</body>
+</html>
